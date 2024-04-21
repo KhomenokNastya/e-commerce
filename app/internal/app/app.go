@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/jackc/pgx/v4/pgxpool"
 	"github.com/julienschmidt/httprouter"
 	"github.com/rs/cors"
 	httpSwagger "github.com/swaggo/http-swagger"
 	_ "golang/docs"
 	"golang/internal/config"
+	"golang/internal/domain/product/storage"
+	"golang/pkg/client/postgresql"
 	"golang/pkg/logging"
 	"golang/pkg/metric"
 	"net"
@@ -24,12 +27,10 @@ type App struct {
 	logger     *logging.Logger
 	router     *httprouter.Router
 	httpServer *http.Server
+	pgClient   *pgxpool.Pool
 }
 
 func NewApp(config *config.Config, logger *logging.Logger) (App, error) {
-	if logger == nil {
-		return App{}, errors.New("logger is not initialized")
-	}
 	logger.Println("router initializing")
 	router := httprouter.New()
 
@@ -41,10 +42,27 @@ func NewApp(config *config.Config, logger *logging.Logger) (App, error) {
 	metricHandler := metric.Handler{}
 	metricHandler.Register(router)
 
+	pgConfig := postgresql.NewPgConfig(
+		config.PostgreSQL.Username, config.PostgreSQL.Password,
+		config.PostgreSQL.Host, config.PostgreSQL.Port, config.PostgreSQL.Database,
+	)
+	pgClient, err := postgresql.NewClient(context.Background(), 5, time.Second*5, pgConfig)
+	if err != nil {
+		logger.Fatal(err)
+	}
+
+	productStorage := storage.NewProductStorage(pgClient, logger)
+	all, err := productStorage.All(context.Background())
+	if err != nil {
+		logger.Fatal(err)
+	}
+	logger.Fatal(all)
+
 	return App{
-		cfg:    config,
-		logger: logger,
-		router: router,
+		cfg:      config,
+		logger:   logger,
+		router:   router,
+		pgClient: pgClient,
 	}, nil
 }
 
